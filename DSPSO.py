@@ -77,9 +77,13 @@ RDD_main = RDD_main.map(lambda x: (list(x), list(x), MSE(x, objetivo), best_glob
 
 for i in range(n):
     #Actualizamos el MSE
-    RDD_main = RDD_main.map(lambda x: (x[0], x[1], MSE(x[0], objetivo), best_global_fitness, velocidades))
+    #RDD_main = RDD_main.map(lambda x: (x[0], x[1], MSE(x[0], objetivo), best_global_fitness, velocidades))
+    RDD_1 = RDD_main.map(lambda x: (x[0], x[1], MSE(x[0], objetivo), best_global_fitness, velocidades))
     #controlamos el mejor ajuste local y mejor posición local
-    RDD_main = RDD_main.map(lambda x: (x[0], slave1(x[2], x[3], x[0], x[1]), x[2], slave2(x[2], x[3]), x[4] ))
+    #RDD_main = RDD_main.map(lambda x: (x[0], slave1(x[2], x[3], x[0], x[1]), x[2], slave2(x[2], x[3]), x[4] ))
+    RDD_3 = RDD_1.map(lambda x: (x[0], slave1(x[2], x[3], x[0], x[1]), x[2], slave2(x[2], x[3]), x[4] ))
+    
+    RDD_main = RDD_3
 
 
 
