@@ -1,0 +1,366 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "98122075",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import random as rn\n",
+    "import findspark\n",
+    "import sys\n",
+    "import time\n",
+    "import numba\n",
+    "from numba import cuda, float32, float64\n",
+    "findspark.init(\"C:\\\\Users\\\\Software\\\\spark-3.3.1-bin-hadoop3\\\\bin\\\\..\")\n",
+    "#findspark.init(\"D:\\\\Users\\\\software\\\\spark-3.2.1-bin-hadoop3.2\\\\bin\\\\..\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "d3166050",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "from pyspark import SparkContext\n",
+    "sc = SparkContext(\"local\",\"PSO Distribuido\")"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "58c02eed",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def MSE(y, pred):\n",
+    "    n = len(y)\n",
+    "    if n != len(pred):\n",
+    "        print(\"error: datos y predicción de distintos tamaños\")\n",
+    "        return -1\n",
+    "\n",
+    "    resultado = 0.0\n",
+    "\n",
+    "    for i in range(n):\n",
+    "        resultado += (y[i] - pred[i])**2\n",
+    "\n",
+    "    resultado = resultado / n\n",
+    "\n",
+    "    return resultado"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "17e48f8c",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "V_max= 5.0\n",
+    "W= 1.0\n",
+    "c_1 = 0.8\n",
+    "c_2 = 0.2\n",
+    "objetivo =[50,50,50]\n",
+    "ind=0\n",
+    "filas_x=[0,0,0]"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "id": "7e29371f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#Número dimensiones de los vectores\n",
+    "n=3\n",
+    "#Número de partículas\n",
+    "m= 10\n",
+    "#Número de iteraciones\n",
+    "I = 1000\n",
+    "posiciones_=[]\n",
+    "mejor_posiciones_locales_=[]\n",
+    "velocidades_=[]\n",
+    "particulas = np.array([posiciones_,velocidades_,mejor_posiciones_locales_])\n",
+    "mejor_pos_global_=[]\n",
+    "mejor_pos_global_arr= np.array([0 for j in range(n)])\n",
+    "best_local_fitness_= []\n",
+    "best_local_fitness_arr=np.array(best_local_fitness_)\n",
+    "#maximum float\n",
+    "max = sys.float_info.max\n",
+    "best_global_fitness = max\n",
+    "accum=sc.accumulator(best_global_fitness)\n",
+    "mejor_pos_global= sc.broadcast(mejor_pos_global_arr)\n",
+    "best_local_fitness= sc.broadcast(best_local_fitness_arr)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "id": "a25eabd0",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def InitParticles(part,N,M,bgf,blf):\n",
+    "    #global best_global_fitness\n",
+    "    for j in range(M):\n",
+    "        posicion=[rn.uniform(-100,100) for j in range(N)]\n",
+    "        posiciones_.append(posicion)\n",
+    "        posiciones= np.array(posiciones_)\n",
+    "        mejor_posiciones_locales_=posiciones_\n",
+    "        mejor_posiciones_locales=np.array(mejor_posiciones_locales_)\n",
+    "        velocidad=[rn.uniform(-100,100) for j in range(N)]\n",
+    "        velocidades_.append(velocidad)\n",
+    "        velocidades= np.array(velocidades_)\n",
+    "        fit = MSE(posiciones[j],objetivo)\n",
+    "        best_local_fitness_.append(fit)\n",
+    "        blf= np.array(best_local_fitness_)\n",
+    "        #print(\"bgf-> \",bgf)\n",
+    "        if fit < bgf:\n",
+    "            bgf = fit\n",
+    "            accum= fit\n",
+    "            mejor_pos_global = mejor_posiciones_locales[j][:]\n",
+    "    part= np.array([posiciones,velocidades,mejor_posiciones_locales])\n",
+    "    return blf,bgf,mejor_pos_global,part "
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "id": "7498de55",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def fitnessEval(part,mpg,blf,bgf, ind):\n",
+    "    filas=part[0:1,ind]\n",
+    "    fit = MSE(filas[0],objetivo)\n",
+    "    if fit< blf[ind]:\n",
+    "        blf[ind] = fit\n",
+    "        #mpl[ind] = part[0:1,ind]\n",
+    "        part[2:,ind]=filas\n",
+    "        if fit < bgf:\n",
+    "            bgf = fit\n",
+    "            mpg = filas[0]\n",
+    "            accum= fit\n",
+    "    return part,mpg,blf,bgf"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "id": "3b6cb338",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#ind=sc.accumulator(0)\n",
+    "def fitnessEval_x(part,mpg,blf,bgf):\n",
+    "    global ind\n",
+    "    filas=part[0:1]\n",
+    "    fit = MSE(filas[0],objetivo)\n",
+    "    if fit < blf[ind]:\n",
+    "        blf[ind] = fit\n",
+    "        #mpl[ind] = part[0:1,ind]\n",
+    "      #  part[2:,ind]=filas\n",
+    "        if fit < bgf:\n",
+    "            bgf = fit\n",
+    "            mpg = filas[0]\n",
+    "            accum= fit\n",
+    "    if ind<10:\n",
+    "        ind+=1\n",
+    "    return part,mpg,blf,bgf"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "id": "cf07aba6",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#def posEval(part,mpl,mpg,ind):\n",
+    "def posEval(part,mpg,ind,N):\n",
+    "    velocidades=part[1:2,ind][0]\n",
+    "    mpl=part[2:,ind][0]\n",
+    "    for k in range(N):\n",
+    "        velocidades[k] = W*velocidades[k] + c_1*r_1*(mpl[k] - part[0:1,ind][0][k]) + c_2*r_2*(mpg[k] - part[0:1,ind][0][k])\n",
+    "        if velocidades[k] > V_max:\n",
+    "            velocidades[k] = V_max\n",
+    "        elif velocidades[k] < -V_max:\n",
+    "            velocidades[k] = -V_max  \n",
+    "        part[0:1,ind][0][k] = part[0:1,ind][0][k] + velocidades[k]\n",
+    "    #return part,velocidades\n",
+    "    return part"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "id": "782b018f",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "#def posEval(part,mpl,mpg,ind):\n",
+    "def posEval_x(part,mpg,N):\n",
+    "#def posEval_x(part,N):\n",
+    "    global ind\n",
+    "    velocidades=part[1:2][0]\n",
+    "    mpl=part[2:][0]\n",
+    "    r_1 = rn.random()\n",
+    "    r_2 = rn.random()\n",
+    "    for k in range(N):\n",
+    "        velocidades[k] = W*velocidades[k] + c_1*r_1*(mpl[k] - part[0:1][0][k]) + c_2*r_2*(mpg[k] - part[0:1][0][k])\n",
+    "        if velocidades[k] > V_max:\n",
+    "            velocidades[k] = V_max\n",
+    "        elif velocidades[k] < -V_max:\n",
+    "            velocidades[k] = -V_max  \n",
+    "        part[0:1][0][k] = part[0:1][0][k] + velocidades[k]\n",
+    "    #return part,velocidades\n",
+    "    return part"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 11,
+   "id": "423fc59b",
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def coresPerSM():\n",
+    "    cc_cores_per_SM_dict = {\n",
+    "    (2,0) : 32,\n",
+    "    (2,1) : 48,\n",
+    "    (3,0) : 192,\n",
+    "    (3,5) : 192,\n",
+    "    (3,7) : 192,\n",
+    "    (5,0) : 128,\n",
+    "    (5,2) : 128,\n",
+    "    (6,0) : 64,\n",
+    "    (6,1) : 128,\n",
+    "    (7,0) : 64,\n",
+    "    (7,5) : 64,\n",
+    "    (8,0) : 64,\n",
+    "    (8,6) : 128,\n",
+    "    (8,9) : 128,\n",
+    "    (9,0) : 128\n",
+    "    }\n",
+    "    # the above dictionary should result in a value of \"None\" if a cc match \n",
+    "    # is not found.  The dictionary needs to be extended as new devices become\n",
+    "    # available, and currently does not account for all Jetson devices\n",
+    "    device = cuda.get_current_device()\n",
+    "    my_sms = getattr(device, 'MULTIPROCESSOR_COUNT')\n",
+    "    my_cc = device.compute_capability\n",
+    "    cores_per_sm = cc_cores_per_SM_dict.get(my_cc)\n",
+    "    total_cores = cores_per_sm*my_sms\n",
+    "    print(\"GPU compute capability: \" , my_cc)\n",
+    "    print(\"GPU total number of SMs: \" , my_sms)\n",
+    "    print(\"total cores: \" , total_cores)\n",
+    "    return cores_per_sm"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "id": "a6e5a1fc",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "device = <CUDA device 0 'b'NVIDIA GeForce RTX 3050 Ti Laptop GPU''>\n",
+      "GPU compute capability:  (8, 6)\n",
+      "GPU total number of SMs:  20\n",
+      "total cores:  2560\n",
+      "cores/SM=  128\n"
+     ]
+    }
+   ],
+   "source": [
+    "best_local_fitness,best_global_fitness,mejor_pos_global,particulas=InitParticles(particulas,n,m,best_global_fitness,best_local_fitness)\n",
+    "#print(\"particulas[0:1]-> \",particulas[0:1][0])\n",
+    "#print(\"mejor velocidades-> \",particulas[1:2][0])\n",
+    "#print(\"mejor posiciones locales-> \",particulas[2:][0])\n",
+    "#print(\"mejor_pos_global-> \",mejor_pos_global)\n",
+    "#print(\"best_global_fitness\",best_global_fitness)\n",
+    "#print(\"best_local_fitness\",best_local_fitness)\n",
+    "print(\"device =\", cuda.get_current_device())\n",
+    "print(\"cores/SM= \",coresPerSM())"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "id": "b9729c88",
+   "metadata": {
+    "scrolled": false
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Tiempo de ejecucion(s):  661.813013792038\n",
+      "mejor_pos_global->  [ 80.63221696  80.09053365 -22.7827239 ]\n",
+      "mejor fitness global->  1.7976931348623157e+308 2380.3659432443183\n"
+     ]
+    }
+   ],
+   "source": [
+    "rdd_master= sc.parallelize(particulas)\n",
+    "#print(\"particulas-> \",particulas[0:1])\n",
+    "start = time.time()\n",
+    "for i in range(I):\n",
+    "    rdd_master.map(lambda x:fitnessEval_x(x,mejor_pos_global,best_local_fitness,best_global_fitness))\n",
+    "    resultado = rdd_master.map(lambda x:posEval_x(x,mejor_pos_global,n)).take(3)\n",
+    "    particulas[0:1]=resultado[0][0]\n",
+    "    particulas[1:2]=resultado[1][0]\n",
+    "    particulas[2:3]=resultado[2][0]\n",
+    "    rdd_master= sc.parallelize(particulas)\n",
+    "   # resultado = resultado_2\n",
+    "end = time.time()\n",
+    "tiempo = end - start\n",
+    "resultado = rdd_master.collect()\n",
+    "#prueba = prueba.collect()\n",
+    "#print(\"resultado-> \",resultado)\n",
+    "#print(\"prueba-> \",prueba)\n",
+    "print(\"Tiempo de ejecucion(s): \", tiempo)\n",
+    "#print(resultado)\n",
+    "#print(\"particulas-> \",particulas[0:1][0])\n",
+    "print(\"mejor_pos_global-> \",mejor_pos_global)\n",
+    "print(\"mejor fitness global-> \", accum.value, MSE(mejor_pos_global,objetivo))"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "id": "8bee39db",
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3 (ipykernel)",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.9.13"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
