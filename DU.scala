@@ -81,7 +81,7 @@ object DU {
       val fit = MSE(posicion, objetivo)
       val part_ = posicion ++ velocidad ++ posicion ++ Array(fit)
 
-      best_local_fitness_arr = best_local_fitness_arr :+ fit
+      //best_local_fitness_arr = best_local_fitness_arr :+ fit
       if (fit < best_global_fitness) {
         best_global_fitness = fit
         //accum.setValue(fit)
@@ -95,19 +95,19 @@ object DU {
 
 
   def fitnessEval(part: Array[Double], N: Int):Array[Double] ={
-    val best_fit_local = part.slice(3*N, 4*N)
+    val best_fit_local = part(3*N)
     val filas = part.slice(0, N)
     val fit = MSE(filas, objetivo)
-    if (fit < best_fit_local(0)) {
+    if (fit < best_fit_local) {
       part(3*N) = fit
       for (k <- 0 until N) {
         part(2*N + k) = filas(k)
       }
-      if (fit < best_global_fitness) {
-        accum.add(fit - best_global_fitness)
-        best_global_fitness = fit
-        mejor_pos_global = filas
-      }
+      //if (fit < best_global_fitness) {
+      //  accum.add(fit - best_global_fitness)
+      //  best_global_fitness = fit
+      //  mejor_pos_global = filas
+      //}
     }
     part
   }
@@ -134,8 +134,7 @@ object DU {
       part(k) = part(k) + velocidades(k)
       part(N+k) = velocidades(k)
     }
-    //return part,velocidades (no es necesario en Scala)
-    return part
+    part
   }
 
 
@@ -150,12 +149,14 @@ object DU {
     mejor_pos_global = array2
     particulas = arrayDeArrays
 
+    //val rdd_master = sc.parallelize(particulas)
     var rdd_master = sc.parallelize(particulas)
     var tiempo_fitness = 0.0
     var tiempo_poseval = 0.0
     var tiempo_global = 0.0
     var tiempo_collect = 0.0
     var tiempo_foreach = 0.0
+    //var tiempo_sort = 0.0
 
     //println("rdd_master antes:", rdd_master.collect())
     //println("antes:", mejor_pos_global)
@@ -165,7 +166,7 @@ object DU {
     for (i <- 0 until I) {
       val local_accum_pos: CollectionAccumulator[Array[Double]] = sc.collectionAccumulator[Array[Double]]("MejorPosLocales")
       //val local_accum_fit: DoubleAccumulator = sc.doubleAccumulator("MiAcumulador")
-      val local_accum_fit: CollectionAccumulator[Double] = sc.collectionAccumulator[Double]("MejorPosLocales")
+      val local_accum_fit: CollectionAccumulator[Double] = sc.collectionAccumulator[Double]("MejorFitLocales")
 
       val start_fitness = System.nanoTime()
       val rdd_fitness = rdd_master.map(x => fitnessEval(x, n))
@@ -180,6 +181,22 @@ object DU {
 
       tiempo_foreach += (end_foreach - start_foreach) / 1e9
 
+
+
+
+      /*val start_sort = System.nanoTime()
+      val a: Int = 3 * n
+      val sorted = rdd_fitness.sortBy(arr => arr(a)).take(1)(0)
+      val mejor_pos_global = sorted.slice(2*n, 3*n)
+      val best_global_fitness = sorted(3*n)
+      val end_sort = System.nanoTime()
+      tiempo_sort += (end_sort - start_sort) / 1e9*/
+
+
+
+
+
+
       //println("local_accum: ", local_accum.value)
 
       val start_global = System.nanoTime()
@@ -187,7 +204,6 @@ object DU {
       var mejor_pos_global = Array.fill(n)(0.0)
       val blfs = local_accum_fit.value
       for (j <- 0 until m) {
-        //println("local_accum(",j,"): ", local_accum.value(0)(j)(1))
         val blf = blfs.get(j)
         if (blf < best_global_fitness) {
           best_global_fitness = blf
@@ -230,6 +246,7 @@ object DU {
     println(s"Tiempo de ejecucion global fitness(s): $tiempo_global")
     println(s"Tiempo de ejecucion collect(s): $tiempo_collect")
     println(s"Tiempo de ejecucion foreach(s): $tiempo_foreach")
+    //println(s"Tiempo de ejecucion sort(s): $tiempo_sort")
     println(s"mejor_pos_global-> ${mejor_pos_global.mkString("[", ", ", "]")}")
     println(s"mejor fitness global-> $best_global_fitness, ${MSE(mejor_pos_global, objetivo)}")
     //println("partículas: ",particulas)
