@@ -96,5 +96,7 @@ val rddnew= rdd.map(x=>RetailByCustomer(x._1,x._2,x._3))
 import spark.implicits._
 val ds:Dataset[RetailByCustomer]= spark.createDataset[RetailByCustomer](rddnew)
 ds.show()
+val transformedRetailData = PreprocessData.createArrayAndCount(ds)
+transformedRetailData.show()
   }
 }
